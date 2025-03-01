@@ -3,7 +3,6 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const request = require('request');
 const path = require('path');
 
-// Подключаем плагин для скрытия автоматизации
 puppeteer.use(StealthPlugin());
 
 class LoginController {
@@ -29,36 +28,45 @@ class LoginController {
 
       await page.goto('https://onlyfans.com/', { waitUntil: 'networkidle2' });
 
-      // CAPTCHA handling (unchanged)
-      const captchaSelector = 'iframe[src*="hcaptcha"]';
-      const captchaPresent = await page.$(captchaSelector);
-      if (captchaPresent) {
-        console.log('CAPTCHA обнаружена, решаем через RuCaptcha...');
-        const siteKey = await page.evaluate(() => {
-          return document.querySelector('iframe[src*="hcaptcha"]').dataset.sitekey;
-        });
-        const captchaId = await sendCaptchaToRuCaptcha(siteKey, page.url());
-        const captchaToken = await getCaptchaSolution(captchaId);
-        if (captchaToken) {
-          await page.evaluate((token) => {
-            document.querySelector('textarea[name="h-captcha-response"]').value = token;
-          }, captchaToken);
-          await page.click('button[type="submit"]', { delay: 100 });
-          await page.waitForNavigation({ waitUntil: 'networkidle2' });
-        } else {
-          throw new Error('Не удалось решить CAPTCHA');
-        }
-      } else {
-        console.log('CAPTCHA не обнаружена, продолжаем...');
-      }
+      const html = await page.htmlContent;
 
-      // Fill email and password fields
+      // // CAPTCHA handling
+      // const captchaSelector = 'iframe[src*="hcaptcha"]';
+      // const captchaPresent = await page.$(captchaSelector);
+      // if (captchaPresent) {
+      //   console.log('CAPTCHA обнаружена, решаем через RuCaptcha...');
+      //   // Получаем HTML-код страницы
+      //   const htmlContent = await page.content();
+
+      //   const siteKey = await page.evaluate(() => {
+      //     return document.querySelector('iframe[src*="hcaptcha"]').dataset.sitekey;
+      //   });
+      //   const captchaId = await sendCaptchaToRuCaptcha(siteKey, page.url());
+      //   const captchaToken = await getCaptchaSolution(captchaId);
+      //   if (captchaToken) {
+      //     await page.evaluate((token) => {
+      //       document.querySelector('textarea[name="h-captcha-response"]').value = token;
+      //     }, captchaToken);
+      //     await page.click('button[type="submit"]', { delay: 100 });
+      //     await page.waitForNavigation({ waitUntil: 'networkidle2' });
+      //   } else {
+      //     // Если не удалось решить CAPTCHA, возвращаем HTML-код страницы
+      //     return res.status(200).json({
+      //       success: false,
+      //       error: 'Не удалось решить CAPTCHA',
+      //       html: htmlContent, // Добавляем HTML-код в ответ
+      //     });
+      //   }
+      // } else {
+      //   console.log('CAPTCHA не обнаружена, продолжаем...');
+      // }
+
+      // Заполнение полей email и password
       await page.waitForSelector('input[name="email"]', { timeout: 10000 });
       await page.waitForSelector('input[name="password"]', { timeout: 10000 });
       await page.type('input[name="email"]', email);
       await page.type('input[name="password"]', password);
 
-      // Find and click the "Авторизуйтесь" button
       const button = await page.$('button.g-btn.m-rounded.m-block.m-md.mb-0');
       if (button) {
         await button.click();
@@ -66,8 +74,7 @@ class LoginController {
         throw new Error('Кнопка "Авторизуйтесь" не найдена');
       }
 
-      await page.waitForNavigation({ waitUntil: 'networkidle2' });
-
+      // await page.waitForNavigation({ waitUntil: 'networkidle2' });
       await page.screenshot({
         fullPage: true,
         path: path.join(__dirname, '../screenshots', 'screenshot.png'),
@@ -76,56 +83,33 @@ class LoginController {
       res.status(200).json({
         success: true,
         url: page.url(),
+        html, // В случае успеха без CAPTCHA возвращаем null для html
       });
     } catch (error) {
       console.error('Ошибка:', error);
-      res.status(500).json({ success: false, error: error.message });
+      // Если ошибка произошла до или после CAPTCHA, пытаемся получить HTML
+      try {
+        let htmlContent = await page.htmlContent;
+        res.status(500).json({
+          success: false,
+          error: error.message,
+          html: htmlContent, // Добавляем HTML-код в случае ошибки, если он доступен
+        });
+      } catch (error) {
+        console.log('net html');
+        res.status(500).json({
+          success: false,
+          error: error.message,
+          // html: htmlContent, // Добавляем HTML-код в случае ошибки, если он доступен
+        });
+      }
+      // if (page) {
+      //   htmlContent = await page.content().catch(() => null);
+      // }
     } finally {
-      if (browser) await browser.close();
+      // if (browser) await browser.close();
     }
   }
-}
-
-// Функция для отправки CAPTCHA на RuCaptcha
-function sendCaptchaToRuCaptcha(siteKey, pageUrl) {
-  return new Promise((resolve, reject) => {
-    const apiKey = '4a55e80727c2054001be94655212d6d7'; // Замените на ваш API-ключ
-    const url = `http://rucaptcha.com/in.php?key=${apiKey}&method=hcaptcha&sitekey=${siteKey}&pageurl=${encodeURIComponent(
-      pageUrl,
-    )}`;
-
-    request(url, (error, response, body) => {
-      if (error) return reject(error);
-      if (body.startsWith('OK|')) {
-        resolve(body.split('|')[1]); // Возвращаем ID задачи
-      } else {
-        reject(new Error('Ошибка при отправке CAPTCHA: ' + body));
-      }
-    });
-  });
-}
-
-// Функция для получения решения CAPTCHA
-function getCaptchaSolution(captchaId) {
-  return new Promise((resolve, reject) => {
-    const apiKey = '4a55e80727c2054001be94655212d6d7'; // Замените на ваш API-ключ
-    const url = `http://rucaptcha.com/res.php?key=${apiKey}&action=get&id=${captchaId}`;
-
-    const interval = setInterval(() => {
-      request(url, (error, response, body) => {
-        if (error) return reject(error);
-        if (body === 'CAPCHA_NOT_READY') {
-          console.log('CAPTCHA ещё не решена, ждём...');
-        } else if (body.startsWith('OK|')) {
-          clearInterval(interval);
-          resolve(body.split('|')[1]); // Возвращаем токен
-        } else {
-          clearInterval(interval);
-          reject(new Error('Ошибка при получении решения CAPTCHA: ' + body));
-        }
-      });
-    }, 5000); // Проверяем каждые 5 секунд
-  });
 }
 
 module.exports = LoginController;
