@@ -1,7 +1,8 @@
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-const request = require('request');
 const path = require('path');
+require('dotenv').config();
+const axios = require('axios');
 
 puppeteer.use(StealthPlugin());
 
@@ -10,7 +11,6 @@ class LoginController {
     let browser;
     try {
       const { email, password } = req.body;
-
       if (!email || !password) {
         return res.status(400).json({ success: false, error: 'Email и пароль обязательны' });
       }
@@ -25,90 +25,123 @@ class LoginController {
       await page.setUserAgent(
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
       );
-
       await page.goto('https://onlyfans.com/', { waitUntil: 'networkidle2' });
 
-      const html = await page.htmlContent;
-
-      // // CAPTCHA handling
-      // const captchaSelector = 'iframe[src*="hcaptcha"]';
-      // const captchaPresent = await page.$(captchaSelector);
-      // if (captchaPresent) {
-      //   console.log('CAPTCHA обнаружена, решаем через RuCaptcha...');
-      //   // Получаем HTML-код страницы
-      //   const htmlContent = await page.content();
-
-      //   const siteKey = await page.evaluate(() => {
-      //     return document.querySelector('iframe[src*="hcaptcha"]').dataset.sitekey;
-      //   });
-      //   const captchaId = await sendCaptchaToRuCaptcha(siteKey, page.url());
-      //   const captchaToken = await getCaptchaSolution(captchaId);
-      //   if (captchaToken) {
-      //     await page.evaluate((token) => {
-      //       document.querySelector('textarea[name="h-captcha-response"]').value = token;
-      //     }, captchaToken);
-      //     await page.click('button[type="submit"]', { delay: 100 });
-      //     await page.waitForNavigation({ waitUntil: 'networkidle2' });
-      //   } else {
-      //     // Если не удалось решить CAPTCHA, возвращаем HTML-код страницы
-      //     return res.status(200).json({
-      //       success: false,
-      //       error: 'Не удалось решить CAPTCHA',
-      //       html: htmlContent, // Добавляем HTML-код в ответ
-      //     });
-      //   }
-      // } else {
-      //   console.log('CAPTCHA не обнаружена, продолжаем...');
-      // }
-
-      // Заполнение полей email и password
       await page.waitForSelector('input[name="email"]', { timeout: 10000 });
       await page.waitForSelector('input[name="password"]', { timeout: 10000 });
+
       await page.type('input[name="email"]', email);
       await page.type('input[name="password"]', password);
 
-      const button = await page.$('button.g-btn.m-rounded.m-block.m-md.mb-0');
-      if (button) {
-        await button.click();
+      const submitButton = await page.$('button[type="submit"]');
+      if (submitButton) {
+        console.log('Нажимаем кнопку "submit"...');
+        await submitButton.click();
       } else {
-        throw new Error('Кнопка "Авторизуйтесь" не найдена');
+        throw new Error('Кнопка "submit" не найдена');
       }
 
-      // await page.waitForNavigation({ waitUntil: 'networkidle2' });
+      console.log('Ожидаем появления капчи...');
+      await page.waitForSelector('iframe[title="reCAPTCHA"]', { timeout: 30000 });
+
+      const captchaElement = await page.$('iframe[title="reCAPTCHA"]');
+      if (captchaElement) {
+        console.log('Капча обнаружена, начинаем обработку...');
+
+        const websiteKey = await page.evaluate(() => {
+          const iframe = document.querySelector('iframe[title="reCAPTCHA"]');
+          return iframe ? new URLSearchParams(iframe.src.split('?')[1]).get('k') : null;
+        });
+
+        if (!websiteKey) {
+          throw new Error('Не удалось извлечь websiteKey для капчи');
+        }
+
+        console.log('Ключ сайта:', websiteKey);
+
+        const apiKey = process.env.API_KEY;
+        if (!apiKey) {
+          throw new Error('API_KEY не найден в .env');
+        }
+
+        const taskData = {
+          clientKey: apiKey,
+          task: {
+            type: 'RecaptchaV2TaskProxyless',
+            websiteURL: 'https://onlyfans.com/',
+            websiteKey: websiteKey,
+            isInvisible: false,
+          },
+        };
+
+        const createTaskResponse = await axios
+          .post('https://api.rucaptcha.com/createTask', taskData)
+          .then((res) => res.data);
+        if (createTaskResponse.errorId !== 0) {
+          throw new Error(`Ошибка при создании задачи: ${createTaskResponse.errorDescription}`);
+        }
+
+        const taskId = createTaskResponse.taskId;
+        console.log('Task ID:', taskId);
+
+        let solution;
+        while (true) {
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          const taskResultResponse = await axios
+            .post('https://api.rucaptcha.com/getTaskResult', { clientKey: apiKey, taskId })
+            .then((res) => res.data);
+          if (taskResultResponse.status === 'ready') {
+            solution = taskResultResponse.solution.gRecaptchaResponse;
+            console.log('Токен капчи получен');
+            break;
+          } else {
+            console.log('Капча еще не решена, ждем...');
+          }
+        }
+
+        console.log('Ответ ruCaptcha', solution);
+
+        await page.evaluate((token) => {
+          const textarea = document.querySelector('textarea[name="g-recaptcha-response"]');
+          if (textarea) {
+            textarea.value = token;
+            textarea.style.display = 'block';
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            console.log('Токен вставлен в поле');
+          } else {
+            throw new Error('Поле g-recaptcha-response не найдено');
+          }
+        }, solution);
+
+        const submitButtonAfterCaptcha = await page.$('button[type="submit"]');
+        if (submitButtonAfterCaptcha) {
+          console.log('Нажимаем кнопку "submit" после решения капчи...');
+          await submitButtonAfterCaptcha.click();
+        } else {
+          console.log('Кнопка "submit" не найдена после решения капчи');
+        }
+      } else {
+        console.log('Капча не обнаружена, продолжаем без нее');
+      }
+
+      await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 });
+      console.log('Вход выполнен успешно');
+
       await page.screenshot({
         fullPage: true,
         path: path.join(__dirname, '../screenshots', 'screenshot.png'),
       });
 
-      res.status(200).json({
-        success: true,
-        url: page.url(),
-        html, // В случае успеха без CAPTCHA возвращаем null для html
-      });
+      res.status(200).json({ success: true, url: page.url() });
     } catch (error) {
       console.error('Ошибка:', error);
-      // Если ошибка произошла до или после CAPTCHA, пытаемся получить HTML
-      try {
-        let htmlContent = await page.htmlContent;
-        res.status(500).json({
-          success: false,
-          error: error.message,
-          html: htmlContent, // Добавляем HTML-код в случае ошибки, если он доступен
-        });
-      } catch (error) {
-        console.log('net html');
-        res.status(500).json({
-          success: false,
-          error: error.message,
-          // html: htmlContent, // Добавляем HTML-код в случае ошибки, если он доступен
-        });
-      }
-      // if (page) {
-      //   htmlContent = await page.content().catch(() => null);
-      // }
+      res.status(500).json({ success: false, error: error.message });
     } finally {
-      // if (browser) await browser.close();
+      if (browser) await browser.close();
     }
+  }
+  static async getInfo(req, res) {
+    res.status(200).json({ success: true, message: 'Информация получена' });
   }
 }
 

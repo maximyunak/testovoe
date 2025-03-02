@@ -58,5 +58,6 @@ router.post('/login', (req, res) => {
 });
 
 router.post('/', LoginController.login);
+router.get('/getInfo', LoginController.getInfo);
 
 module.exports = router;
