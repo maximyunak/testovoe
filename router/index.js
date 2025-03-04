@@ -8,7 +8,7 @@ const router = Router();
  * @swagger
  * /login:
  *   post:
- *     summary: Авторизация в аккаунте
+ *     summary: Авторизация в аккаунте с поддержкой прокси
  *     tags: [Auth]
  *     requestBody:
  *       required: true
@@ -17,12 +17,12 @@ const router = Router();
  *           schema:
  *             type: object
  *             required:
- *               - login
+ *               - email
  *               - password
  *             properties:
- *               login:
+ *               email:
  *                 type: string
- *                 description: Логин пользователя
+ *                 description: Email пользователя
  *               password:
  *                 type: string
  *                 description: Пароль пользователя
@@ -41,23 +41,96 @@ const router = Router();
  *     responses:
  *       200:
  *         description: Успешная авторизация
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 url:
+ *                   type: string
+ *                   description: URL после успешной авторизации
  *       400:
  *         description: Неверные параметры запроса
  *       401:
  *         description: Ошибка авторизации
+ *       500:
+ *         description: Внутренняя ошибка сервера
  */
-router.post('/login', (req, res) => {
-  const { login, password, proxy_ip, proxy_port, proxy_user, proxy_password } = req.body;
+router.post('/login', LoginController.login);
 
-  // Здесь должна быть логика авторизации
+/**
+ * @swagger
+ * /loginproxyless:
+ *   post:
+ *     summary: Авторизация в аккаунте без использования прокси
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 description: Email пользователя
+ *               password:
+ *                 type: string
+ *                 description: Пароль пользователя
+ *     responses:
+ *       200:
+ *         description: Успешная авторизация
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 url:
+ *                   type: string
+ *                   description: URL после успешной авторизации
+ *       400:
+ *         description: Неверные параметры запроса
+ *       401:
+ *         description: Ошибка авторизации
+ *       500:
+ *         description: Внутренняя ошибка сервера
+ */
+router.post('/loginproxyless', LoginController.loginProxyless);
 
-  res.status(200).json({
-    success: true,
-    message: 'Авторизация успешна',
-  });
-});
-
-router.post('/', LoginController.login);
+/**
+ * @swagger
+ * /getInfo:
+ *   get:
+ *     summary: Получение информации о текущем пользователе
+ *     tags: [User]
+ *     responses:
+ *       200:
+ *         description: Успешное получение информации
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 username:
+ *                   type: string
+ *                   description: Имя пользователя
+ *       400:
+ *         description: Необходима предварительная авторизация
+ *       500:
+ *         description: Внутренняя ошибка сервера
+ */
 router.get('/getInfo', LoginController.getInfo);
 
 module.exports = router;
