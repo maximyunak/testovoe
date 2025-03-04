@@ -6,6 +6,8 @@ const axios = require('axios');
 
 puppeteer.use(StealthPlugin());
 
+let activePage = null;
+
 class LoginController {
   static async login(req, res) {
     let browser;
@@ -124,7 +126,6 @@ class LoginController {
         console.log('Капча не обнаружена, продолжаем без нее');
       }
 
-      await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 });
       console.log('Вход выполнен успешно');
 
       await page.screenshot({
@@ -132,16 +133,42 @@ class LoginController {
         path: path.join(__dirname, '../screenshots', 'screenshot.png'),
       });
 
+      activePage = page;
+
       res.status(200).json({ success: true, url: page.url() });
     } catch (error) {
       console.error('Ошибка:', error);
       res.status(500).json({ success: false, error: error.message });
-    } finally {
-      if (browser) await browser.close();
     }
   }
+
   static async getInfo(req, res) {
-    res.status(200).json({ success: true, message: 'Информация получена' });
+    try {
+      if (!activePage) {
+        return res.status(400).json({ success: false, error: 'Сначала выполните вход' });
+      }
+
+      await activePage.waitForSelector('div.l-sidebar__username .g-user-name', { timeout: 30000 });
+
+      const username = await activePage.evaluate(() => {
+        const usernameElement = document.querySelector('div.l-sidebar__username .g-user-name');
+        return usernameElement ? usernameElement.textContent.trim() : null;
+      });
+
+      if (!username) {
+        throw new Error('Не удалось найти имя пользователя');
+      }
+
+      console.log('Имя пользователя:', username);
+
+      res.status(200).json({
+        success: true,
+        username: username,
+      });
+    } catch (error) {
+      console.error('Ошибка в getInfo:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
   }
 }
 
